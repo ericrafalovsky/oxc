@@ -17,7 +17,9 @@ use crate::{
     context::LintContext,
     frameworks::FrameworkOptions,
     rule::{DefaultRuleConfig, Rule},
-    utils::{for_each_define_props_type_signature, is_vue_component_options_object},
+    utils::{
+        diagnostic_text, for_each_define_props_type_signature, is_vue_component_options_object,
+    },
 };
 
 /// Reserved instance properties of the Vue instance (Vue 2/3 common).
@@ -221,17 +223,21 @@ impl NoReservedKeys {
     fn check_keys<'a>(&self, group: &str, obj: &ObjectExpression<'a>, ctx: &LintContext<'a>) {
         for prop_kind in &obj.properties {
             let ObjectPropertyKind::ObjectProperty(p) = prop_kind else { continue };
-            let Some(name) =
-                p.key.static_name().and_then(oxc_ast::StaticPropertyName::into_cow_str)
-            else {
+            let Some(name) = p.key.static_name() else {
                 continue;
             };
+            let name = name.as_js_str();
             let span = p.key.span();
-            let n = name.as_ref();
-            if self.is_reserved(n) {
+            if let Some(n) = name.as_str()
+                && self.is_reserved(n)
+            {
                 ctx.diagnostic(reserved_key_diagnostic(n, span));
-            } else if matches!(group, "data" | "asyncData") && n.starts_with('_') {
-                ctx.diagnostic(starts_with_underscore_diagnostic(n, group, span));
+            } else if matches!(group, "data" | "asyncData") && name.starts_with('_') {
+                ctx.diagnostic(starts_with_underscore_diagnostic(
+                    &diagnostic_text(name),
+                    group,
+                    span,
+                ));
             }
         }
     }
@@ -586,6 +592,18 @@ fn test() {
                 })
                 </script>
             ",
+            None,
+            None,
+            Some(PathBuf::from("test.vue")),
+        ),
+        (
+            r#"
+                <script>
+                new Vue({
+                  data: () => ({ "_\uD800": 1 })
+                })
+                </script>
+            "#,
             None,
             None,
             Some(PathBuf::from("test.vue")),
